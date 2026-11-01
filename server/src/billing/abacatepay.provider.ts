@@ -50,15 +50,15 @@ export class AbacatePayProvider implements BillingProvider {
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutResult> {
     if (request.currency !== 'BRL') throw new Error('UNSUPPORTED_CURRENCY');
-    const productId = configured(request.billingPeriod === 'yearly' ? 'ABACATEPAY_YEARLY_PRODUCT_ID' : 'ABACATEPAY_MONTHLY_PRODUCT_ID');
+    const productId = configured(request.billingPeriod === 'yearly' ? 'ABACATEPAY_PIX_YEARLY_PRODUCT_ID' : 'ABACATEPAY_PIX_MONTHLY_PRODUCT_ID');
     const landingUrl = configured('PUBLIC_LANDING_URL').replace(/\/$/, '');
     const checkout = await this.request<{ id: string; url: string; amount: number; items: Array<{id:string;quantity:number}> }>(
-      '/subscriptions/create',
+      '/checkouts/create',
       'POST',
       {
         items: [{ id: productId, quantity: 1 }],
         externalId: request.orderPublicId,
-        methods: ['CARD'],
+        methods: ['PIX'],
         returnUrl: `${landingUrl}/#planos`,
         completionUrl: `${landingUrl}/obrigado`,
         metadata: { orderPublicId: request.orderPublicId },
@@ -107,6 +107,7 @@ export class AbacatePayProvider implements BillingProvider {
     const payment = object(data.payment);
     const customer = object(data.customer);
     const mapping: Record<string, InternalBillingEvent['type']> = {
+      'checkout.completed': 'payment.approved',
       'subscription.completed': 'subscription.activated',
       'subscription.renewed': 'subscription.renewed',
       'subscription.payment_failed': 'subscription.past_due',
@@ -116,9 +117,12 @@ export class AbacatePayProvider implements BillingProvider {
     const type = mapping[body.event];
     if (!type) throw Object.assign(new Error('UNSUPPORTED_WEBHOOK_EVENT'), { statusCode: 400 });
     const occurredAt = optionalDate(payment.updatedAt) ?? optionalDate(subscription.updatedAt) ?? optionalDate(checkout.updatedAt) ?? new Date();
-    const amountCents = Number(payment.paidAmount ?? payment.amount ?? subscription.amount);
+    const amountCents = Number(payment.paidAmount ?? payment.amount ?? checkout.paidAmount ?? subscription.amount);
     const productId = Array.isArray(checkout.items) ? object(checkout.items[0]).id : undefined;
-    const knownProduct = productId === process.env.ABACATEPAY_MONTHLY_PRODUCT_ID || productId === process.env.ABACATEPAY_YEARLY_PRODUCT_ID;
+    const knownProduct = [process.env.ABACATEPAY_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_YEARLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_YEARLY_PRODUCT_ID].includes(productId);
+    if (body.event === 'checkout.completed' && (checkout.frequency !== 'ONE_TIME' || checkout.status !== 'PAID' || checkout.isUpSell === true)) {
+      throw Object.assign(new Error('INVALID_PIX_CHECKOUT_EVENT'), { statusCode: 400 });
+    }
     return {
       providerEventId: body.id,
       type,

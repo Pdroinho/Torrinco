@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
+import { nextPaidPeriodEnd } from '../billing/paid-period.js';
 
 const DEFAULT_CATEGORIES = [
   ['Salário','income','#22c55e'],['Freelance','income','#10b981'],['Investimentos','income','#0ea5e9'],['Presentes','income','#8b5cf6'],['Outros','income','#64748b'],
@@ -41,7 +42,8 @@ export class AccountProvisioningService {
 
   static async activatePaidOrder(input: {
     orderId:number; name:string; phone:string; email?:string|null; planId:number;
-    existingUserId?:number|null; existingAccountId?:number|null; periodEndsAt:Date;
+    existingUserId?:number|null; existingAccountId?:number|null; periodEndsAt:Date; paidAt?:Date; billingPeriodDays?:number;
+    billing?: {provider:string; externalSubscriptionId:string; externalCustomerId?:string; occurredAt:Date};
   }) {
     const phone=this.normalizePhone(input.phone);const plainToken=crypto.randomBytes(32).toString('base64url');const tokenHash=crypto.createHash('sha256').update(plainToken).digest('hex');
     return prisma.$transaction(async tx=>{
@@ -51,14 +53,26 @@ export class AccountProvisioningService {
       let account=input.existingAccountId?await tx.accounts.findUnique({where:{id:input.existingAccountId}}):null;
       if(user&&!account)account=await tx.accounts.findUnique({where:{id:user.account_id}});
       if(user&&account&&user.account_id!==account.id)throw new Error('ORDER_ACCOUNT_MISMATCH');
+      // Serialize extensions to prevent simultaneous payments from overwriting paid time.
+      if (account && input.paidAt && input.billingPeriodDays) {
+        await tx.$queryRaw`SELECT id FROM accounts WHERE id = ${account.id} FOR UPDATE`;
+        account = await tx.accounts.findUniqueOrThrow({where:{id:account.id}});
+        input.periodEndsAt = nextPaidPeriodEnd(input.paidAt, account.current_period_ends_at, input.billingPeriodDays);
+      }
       const previousStatus=account?.status??null;
       if(!account)account=await tx.accounts.create({data:{name:input.name,plan_id:plan.id,status:'active',current_period_ends_at:input.periodEndsAt,origin:'checkout'}});
       else account=await tx.accounts.update({where:{id:account.id},data:{plan_id:plan.id,status:'active',trial_ends_at:null,current_period_ends_at:input.periodEndsAt,cancelled_at:null,grace_period_ends_at:null}});
       if(!user)user=await tx.users.create({data:{account_id:account.id,phone_number:phone,email:input.email??undefined,name:input.name,role:'owner',status:'active'}});
-      await tx.account_members.upsert({where:{account_id_user_id:{account_id:account.id,user_id:user.id}},create:{account_id:account.id,user_id:user.id,role:'owner',status:'active'},update:{role:'owner',status:'active'}});
+      await tx.account_members.upsert({where:{account_id_user_id:{account_id:account.id,user_id:user.id}},create:{account_id:account.id,user_id:user.id,role:user.role??'member',status:'active'},update:{}});
       await tx.categories.createMany({data:DEFAULT_CATEGORIES.map(([name,type,color])=>({account_id:account!.id,name,type,color})),skipDuplicates:true});
       await tx.subscription_history.create({data:{account_id:account.id,plan_id:plan.id,previous_status:previousStatus,new_status:'active',reason:previousStatus==='trial'?'trial_converted_by_payment':'payment_approved',metadata:{orderId:input.orderId}}});
       let invitation=null;if(!user.password_hash)invitation=await tx.account_invitations.create({data:{user_id:user.id,account_id:account.id,purpose:'first_access',token_hash:tokenHash,status:'pending',expires_at:new Date(Date.now()+Number(process.env.PLATFORM_INVITE_EXPIRES_HOURS??72)*3_600_000),metadata:{orderId:input.orderId,origin:'checkout'}}});
+      if (input.billing) {
+        const b=input.billing;
+        await tx.accounts.updateMany({where:{id:account.id,access_status:'suspended',access_suspension_reason:'payment_refunded'},data:{access_status:'enabled',access_suspended_at:null,access_suspension_reason:null,access_suspended_by_user_id:null}});
+        await tx.commerce_orders.update({where:{id:input.orderId},data:{user_id:user.id,account_id:account.id,status:'paid',review_reason:null}});
+        await tx.billing_subscriptions.upsert({where:{provider_external_subscription_id:{provider:b.provider,external_subscription_id:b.externalSubscriptionId}},create:{order_id:input.orderId,account_id:account.id,provider:b.provider,external_customer_id:b.externalCustomerId,external_subscription_id:b.externalSubscriptionId,status:'active',current_period_starts_at:b.occurredAt,current_period_ends_at:account.current_period_ends_at,last_event_at:b.occurredAt},update:{status:'active',current_period_ends_at:account.current_period_ends_at,last_event_at:b.occurredAt}});
+      }
       return {account,user,plan,invitation,plainToken:invitation?plainToken:undefined};
     });
   }

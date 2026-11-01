@@ -130,7 +130,7 @@ export async function getSubscriptionOverview(accountId: number) {
     prisma.subscription_history.findMany({ where: { account_id: accountId }, orderBy: { created_at: 'desc' }, take: 25 }),
     // Somente individual esta comercialmente liberado. Precos permanecem os persistidos.
     prisma.plans.findMany({ where: { name: 'individual', status: 'active' }, orderBy: { id: 'asc' } }),
-    prisma.billing_subscriptions.findFirst({where:{account_id:accountId,provider:'abacatepay'},orderBy:{created_at:'desc'},select:{status:true,current_period_ends_at:true}}),
+    prisma.billing_subscriptions.findFirst({where:{account_id:accountId,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'}},orderBy:{created_at:'desc'},select:{status:true,current_period_ends_at:true}}),
   ]);
   return {
     status: entitlement.access.status,

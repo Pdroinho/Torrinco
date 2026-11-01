@@ -175,6 +175,10 @@ const startServer = async () => {
     // Registra os jobs agendados (recorrências + ciclo de faturas).
     const { startScheduledJobs } = await import('./jobs/scheduler.js');
     if (process.env.SCHEDULER_ENABLED !== 'false') startScheduledJobs();
+    if (process.env.BILLING_REMINDERS_ENABLED === 'true') {
+      const { startBillingReminders } = await import('./jobs/billing-reminders.js');
+      startBillingReminders();
+    }
 
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);

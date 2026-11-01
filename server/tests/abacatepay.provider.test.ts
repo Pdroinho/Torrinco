@@ -9,15 +9,17 @@ describe('AbacatePay v2 recurring contract', () => {
     vi.stubEnv('ABACATEPAY_API_KEY', 'abc_prod_test-only');
     vi.stubEnv('ABACATEPAY_MONTHLY_PRODUCT_ID', 'prod_month');
     vi.stubEnv('ABACATEPAY_YEARLY_PRODUCT_ID', 'prod_year');
+    vi.stubEnv('ABACATEPAY_PIX_MONTHLY_PRODUCT_ID', 'prod_pix_month');
+    vi.stubEnv('ABACATEPAY_PIX_YEARLY_PRODUCT_ID', 'prod_pix_year');
     vi.stubEnv('ABACATEPAY_WEBHOOK_SECRET', 'test-secret');
     vi.stubEnv('PUBLIC_LANDING_URL', 'https://torrinco.com.br');
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-  it('creates a monthly subscription checkout with the configured recurring product', async () => {
+  it('creates a monthly Pix checkout with the configured one-period product', async () => {
     const fetchMock = vi.fn(async (_url: string, options: RequestInit) => {
       const body = JSON.parse(String(options.body));
-      expect(body).toMatchObject({ externalId: 'order-1', methods: ['CARD'], items: [{ id: 'prod_month', quantity: 1 }] });
+      expect(body).toMatchObject({ externalId: 'order-1', methods: ['PIX'], items: [{ id: 'prod_pix_month', quantity: 1 }] });
       expect(body.frequency).toBeUndefined();
       return { ok: true, status: 200, json: async () => ({ success: true, data: { id: 'bill_1', url: 'https://app.abacatepay.com/pay/bill_1', amount: 1990, items: body.items } }) };
     });
@@ -37,5 +39,15 @@ describe('AbacatePay v2 recurring contract', () => {
     const event = await new AbacatePayProvider().validateAndMapWebhook(raw, { 'x-torrinco-webhook-secret': 'test-secret', 'x-webhook-signature': signature });
     expect(event).toMatchObject({ type: 'subscription.activated', externalCheckoutId: 'bill_1', externalSubscriptionId: 'subs_1', amount: '19.90', currency: 'BRL' });
     await expect(new AbacatePayProvider().validateAndMapWebhook(raw, { 'x-torrinco-webhook-secret': 'test-secret', 'x-webhook-signature': 'invalid' })).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('maps a confirmed one-time Pix checkout and rejects an unpaid event', async () => {
+    async function map(status: string) {
+      const raw = Buffer.from(JSON.stringify({ id:'log_pix', event:'checkout.completed', devMode:false, data:{ checkout:{id:'bill_pix',externalId:'order-1',frequency:'ONE_TIME',status,paidAmount:1990,items:[{id:'prod_pix_month',quantity:1}]} } }));
+      const signature = crypto.createHmac('sha256', PUBLIC_HMAC_KEY).update(raw).digest('base64');
+      return new AbacatePayProvider().validateAndMapWebhook(raw, {'x-torrinco-webhook-secret':'test-secret','x-webhook-signature':signature});
+    }
+    expect(await map('PAID')).toMatchObject({type:'payment.approved',amount:'19.90',externalCheckoutId:'bill_pix',orderPublicId:'order-1'});
+    await expect(map('PENDING')).rejects.toMatchObject({statusCode:400});
   });
 });

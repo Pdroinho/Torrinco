@@ -25,7 +25,7 @@ router.post('/checkout', firstAccessLimiter, async (req, res, next) => {
     }
     const input = requestSchema.parse(req.body);
     const existingUser = await prisma.users.findUnique({where:{phone_number:input.phone.replace(/\D/g,'')}});
-    if (existingUser && await prisma.billing_subscriptions.count({where:{account_id:existingUser.account_id,provider:'abacatepay',status:{in:['active','past_due']}}})) {
+    if (existingUser && await prisma.billing_subscriptions.count({where:{account_id:existingUser.account_id,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}}})) {
       return res.status(409).json({error:'Já existe assinatura recorrente para este WhatsApp. Entre no app para gerenciá-la.'});
     }
     const order = await BillingOrchestratorService.createOrder({ ...input, planName: 'individual' });

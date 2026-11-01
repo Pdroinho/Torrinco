@@ -11,7 +11,7 @@ export class SubscriptionController {
     try {
       if (req.userRole !== 'owner' && req.userRole !== 'admin') return res.status(403).json({error:'Admin requerido'});
       const input = z.object({billingPeriod:z.enum(['monthly','yearly']),idempotencyKey:z.uuid(),email:z.email()}).parse(req.body);
-      const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',status:{in:['active','past_due']}}});
+      const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}}});
       if (active) return res.status(409).json({error:'Já existe uma assinatura recorrente ativa.'});
       const user = await prisma.users.findUniqueOrThrow({where:{id:req.userId!}});
       const order = await BillingOrchestratorService.createOrder({idempotencyKey:input.idempotencyKey,planName:'individual',billingPeriod:input.billingPeriod,name:user.name??'Cliente Torrinco',phone:user.phone_number,email:input.email,userId:user.id,accountId:req.accountId});
