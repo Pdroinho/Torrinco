@@ -134,7 +134,7 @@ export class AbacatePayProvider implements BillingProvider {
     const occurredAt = optionalDate(payment.updatedAt) ?? optionalDate(subscription.updatedAt) ?? optionalDate(checkout.updatedAt) ?? new Date();
     const amountCents = Number(payment.paidAmount ?? payment.amount ?? checkout.paidAmount ?? subscription.amount);
     const productId = Array.isArray(checkout.items) ? object(checkout.items[0]).id : undefined;
-    const knownProduct = [process.env.ABACATEPAY_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_YEARLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_YEARLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_MONTHLY_LEGACY_PRODUCT_ID, process.env.ABACATEPAY_PIX_YEARLY_LEGACY_PRODUCT_ID].includes(productId);
+    const knownProduct = [process.env.ABACATEPAY_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_YEARLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_MONTHLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_YEARLY_PRODUCT_ID, process.env.ABACATEPAY_PIX_MONTHLY_LEGACY_PRODUCT_ID, process.env.ABACATEPAY_PIX_YEARLY_LEGACY_PRODUCT_ID, process.env.ABACATEPAY_PIX_TEST_PRODUCT_ID].includes(productId);
     if (body.event === 'checkout.completed' && checkout.frequency && checkout.frequency !== 'ONE_TIME') type = 'checkout.ignored';
     if (body.event === 'checkout.completed' && type !== 'checkout.ignored' && (checkout.frequency !== 'ONE_TIME' || checkout.status !== 'PAID' || checkout.isUpSell === true)) {
       throw Object.assign(new Error('INVALID_PIX_CHECKOUT_EVENT'), { statusCode: 400 });

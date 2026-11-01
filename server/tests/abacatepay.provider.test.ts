@@ -89,6 +89,13 @@ describe('AbacatePay v2 recurring contract', () => {
     expect(await new AbacatePayProvider().validateAndMapWebhook(raw,{'x-torrinco-webhook-secret':'test-secret','x-webhook-signature':signature})).toMatchObject({type:'payment.approved',amount:'119.88',planReference:'individual'});
   });
 
+  it('recognizes the configured isolated Pix test product', async () => {
+    vi.stubEnv('ABACATEPAY_PIX_TEST_PRODUCT_ID', 'prod_pix_test');
+    const raw=Buffer.from(JSON.stringify({id:'log_test',event:'checkout.completed',devMode:false,data:{checkout:{id:'bill_test',externalId:'test-order',frequency:'ONE_TIME',status:'PAID',paidAmount:100,items:[{id:'prod_pix_test',quantity:1}]}}}));
+    const signature=crypto.createHmac('sha256',PUBLIC_HMAC_KEY).update(raw).digest('base64');
+    expect(await new AbacatePayProvider().validateAndMapWebhook(raw,{'x-torrinco-webhook-secret':'test-secret','x-webhook-signature':signature})).toMatchObject({type:'payment.approved',amount:'1.00',planReference:'individual'});
+  });
+
   it('ignores checkout completion for a subscription and waits for its activation event',async()=>{
     const raw=Buffer.from(JSON.stringify({id:'log_sub_checkout',event:'checkout.completed',devMode:false,data:{checkout:{id:'bill_1',frequency:'SUBSCRIPTION',status:'PAID'}}}));
     const signature=crypto.createHmac('sha256',PUBLIC_HMAC_KEY).update(raw).digest('base64');
