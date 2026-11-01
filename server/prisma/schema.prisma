@@ -112,6 +112,8 @@ model commerce_orders {
   expected_amount       Decimal                 @db.Decimal(10, 2)
   currency              String                  @default("BRL") @db.VarChar(3)
   billing_period_days   Int                     @default(30)
+  payment_method        String                  @default("pix") @db.VarChar(16)
+  open_card_key         String?                 @unique @db.VarChar(64)
   status                commerce_order_status   @default(pending)
   review_reason         String?                 @db.VarChar(255)
   created_at            DateTime                @default(now()) @db.DateTime(3)

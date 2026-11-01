@@ -18,6 +18,7 @@ const money = (value: string | number | null) => value == null ? 'Indisponível'
 export function Subscription() {
   const [data, setData] = useState<Overview | null>(null);
   const [email, setEmail] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'card'|'pix'>('card');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const keys = useRef<Record<string, string>>({});
@@ -27,10 +28,11 @@ export function Subscription() {
   async function buy(period: 'monthly' | 'yearly') {
     setBusy(true); setError('');
     try {
-      keys.current[period] ??= crypto.randomUUID();
-      const response = await api.post('/subscription/checkout', { billingPeriod: period, email, idempotencyKey: keys.current[period] });
+      const key = `${period}:${paymentMethod}:${email.trim().toLowerCase()}`;
+      keys.current[key] ??= crypto.randomUUID();
+      const response = await api.post('/subscription/checkout', { billingPeriod: period, paymentMethod, email, idempotencyKey: keys.current[key] });
       window.location.assign(response.data.url);
-    } catch { setError('Não foi possível iniciar a assinatura. Confira o e-mail e tente novamente.'); setBusy(false); }
+    } catch (err: any) { setError(err?.response?.status === 409 && typeof err.response.data?.error === 'string' ? err.response.data.error : 'Não foi possível iniciar o pagamento. Confira o e-mail e tente novamente.'); setBusy(false); }
   }
 
   async function cancel() {
@@ -66,11 +68,15 @@ export function Subscription() {
         : data.recurring?.status === 'cancelled' && data.access.allowed ? <p className="mt-2">Renovação cancelada. Seu acesso continua até {formatDate(data.recurring.currentPeriodEndsAt)}.</p>
         : <div className="mt-4 max-w-md space-y-3">
           <label className="block text-sm">E-mail para a cobrança<input required type="email" value={email} onChange={event => setEmail(event.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+          <fieldset className="flex flex-wrap gap-4"><legend className="mb-2 text-sm font-semibold">Forma de pagamento</legend>
+            <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='card'} onChange={()=>setPaymentMethod('card')} /> Cartão de crédito</label>
+            <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='pix'} onChange={()=>setPaymentMethod('pix')} /> Pix</label>
+          </fieldset>
           {data.availablePlans.map(plan => <div key={plan.id} className="space-y-2">
-            <button disabled={busy || !email.includes('@')} onClick={() => buy('monthly')} className="w-full rounded-lg bg-torrinco-700 px-4 py-3 text-white disabled:opacity-50">Pagar um mês · {money(plan.price_monthly)}</button>
-            <button disabled={busy || !email.includes('@')} onClick={() => buy('yearly')} className="w-full rounded-lg border px-4 py-3 disabled:opacity-50">Pagar um ano · {money(plan.price_yearly)}</button>
+            <button disabled={busy || !email.includes('@')} onClick={() => buy('monthly')} className="w-full rounded-lg bg-torrinco-700 px-4 py-3 text-white disabled:opacity-50">{paymentMethod==='card'?'Assinar mensal':'Pagar um mês'} · {money(plan.price_monthly)}</button>
+            <button disabled={busy || !email.includes('@')} onClick={() => buy('yearly')} className="w-full rounded-lg border px-4 py-3 disabled:opacity-50">{paymentMethod==='card'?'Assinar anual':'Pagar um ano'} · {money(plan.price_yearly)}</button>
           </div>)}
-          <p className="text-sm text-gray-500">Pagamento por Pix. Para renovar, faça um novo pagamento ao fim do período.</p>
+          <p className="text-sm text-gray-500">{paymentMethod==='card'?'Assinatura com renovação automática no cartão. Cancele quando quiser.':'Pagamento por Pix. Para renovar, faça um novo pagamento ao fim do período.'}</p>
         </div>}
     </section>
   </main>;

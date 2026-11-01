@@ -2,9 +2,9 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../src/lib/prisma.js', () => ({ prisma: { users:{findUnique:vi.fn(async()=>null)} } }));
+vi.mock('../src/lib/prisma.js', () => ({ prisma: { users:{findUnique:vi.fn(async()=>null)},commerce_orders:{findUnique:vi.fn(async()=>null)} } }));
 vi.mock('../src/services/billing-orchestrator.service.js', () => ({ BillingOrchestratorService:{
-  createOrder:vi.fn(async(input:any)=>({public_id:'test-order',customer_phone:input.phone,customer_email:input.email,billing_period_days:30})),
+  createOrder:vi.fn(async(input:any)=>({public_id:'test-order',customer_phone:input.phone,customer_email:input.email,payment_method:input.paymentMethod,billing_period_days:30})),
   createCheckout:vi.fn(async()=>({checkout_url:'https://example.org/checkout'})),
 } }));
 import billingRoutes from '../src/routes/billing.routes.js';

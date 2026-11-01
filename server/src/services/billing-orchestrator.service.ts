@@ -7,13 +7,34 @@ import { invalidateAccountStatusCache } from '../middleware/jwt.js';
 import { EvolutionService } from './evolution.service.js';
 
 export class BillingOrchestratorService {
-  static async createOrder(input:{idempotencyKey:string;planName:string;billingPeriod:'monthly'|'yearly';name:string;phone:string;email?:string;userId?:number;accountId?:number}){
+  static async createOrder(input:{idempotencyKey:string;planName:string;billingPeriod:'monthly'|'yearly';paymentMethod?:'pix'|'card';name:string;phone:string;email?:string;userId?:number;accountId?:number}){
     const existing=await prisma.commerce_orders.findUnique({where:{idempotency_key:input.idempotencyKey}});if(existing)return existing;
+    const openCardKey=input.paymentMethod==='card'?crypto.createHash('sha256').update(AccountProvisioningService.normalizePhone(input.phone)).digest('hex'):null;
+    if(openCardKey){const pending=await prisma.commerce_orders.findUnique({where:{open_card_key:openCardKey}});if(pending)return pending;}
     const plan=await prisma.plans.findUnique({where:{name:input.planName}});if(!plan||plan.status!=='active')throw Object.assign(new Error('PLAN_NOT_AVAILABLE'),{statusCode:400});
     const amount=input.billingPeriod==='yearly'?plan.price_yearly:plan.price_monthly;if(amount==null)throw Object.assign(new Error('PLAN_PRICE_NOT_CONFIGURED'),{statusCode:409});
-    try{return await prisma.commerce_orders.create({data:{public_id:crypto.randomUUID(),idempotency_key:input.idempotencyKey,user_id:input.userId,account_id:input.accountId,plan_id:plan.id,customer_name:input.name,customer_phone:AccountProvisioningService.normalizePhone(input.phone),customer_email:input.email,expected_amount:amount,currency:'BRL',billing_period_days:input.billingPeriod==='yearly'?365:30}})}catch(error:any){if(error?.code!=='P2002')throw error;return prisma.commerce_orders.findUniqueOrThrow({where:{idempotency_key:input.idempotencyKey}})};
+    try{return await prisma.commerce_orders.create({data:{public_id:crypto.randomUUID(),idempotency_key:input.idempotencyKey,open_card_key:openCardKey,user_id:input.userId,account_id:input.accountId,plan_id:plan.id,customer_name:input.name,customer_phone:AccountProvisioningService.normalizePhone(input.phone),customer_email:input.email,expected_amount:amount,currency:'BRL',payment_method:input.paymentMethod??'pix',billing_period_days:input.billingPeriod==='yearly'?365:30}})}catch(error:any){if(error?.code!=='P2002')throw error;const prior=await prisma.commerce_orders.findUnique({where:{idempotency_key:input.idempotencyKey}});if(prior)return prior;if(openCardKey){const pending=await prisma.commerce_orders.findUnique({where:{open_card_key:openCardKey}});if(pending)return pending;}throw error};
   }
-  static async createCheckout(orderPublicId:string,provider:BillingProvider){const order=await prisma.commerce_orders.findUnique({where:{public_id:orderPublicId},include:{plans:true}});if(!order)throw Object.assign(new Error('ORDER_NOT_FOUND'),{statusCode:404});const existing=await prisma.billing_checkouts.findFirst({where:{order_id:order.id,provider:provider.name}});if(existing)return existing;const result=await provider.createCheckout({orderPublicId:order.public_id,amount:String(order.expected_amount),currency:order.currency,billingPeriod:order.billing_period_days===365?'yearly':'monthly',customer:{name:order.customer_name,phone:order.customer_phone,email:order.customer_email??undefined},description:`Torrinco ${order.plans.name}`});const checkout=await prisma.billing_checkouts.create({data:{order_id:order.id,provider:provider.name,external_checkout_id:result.externalCheckoutId,checkout_url:result.checkoutUrl,expires_at:result.expiresAt}});await prisma.commerce_orders.update({where:{id:order.id},data:{status:'checkout_created'}});return checkout}
+  static async createCheckout(orderPublicId:string,provider:BillingProvider){
+    const order=await prisma.commerce_orders.findUnique({where:{public_id:orderPublicId},include:{plans:true}});if(!order)throw Object.assign(new Error('ORDER_NOT_FOUND'),{statusCode:404});
+    const existing=await prisma.billing_checkouts.findFirst({where:{order_id:order.id,provider:provider.name}});
+    if(existing){if(order.payment_method==='card'){const remote=await provider.getStatus(existing.external_checkout_id);if(remote.status!=='PENDING')throw Object.assign(new Error('Este pagamento não está mais pendente. Entre em contato com o suporte para continuar.'),{statusCode:409});}return existing;}
+    if(order.payment_method==='card'){
+      const claim=await prisma.commerce_orders.updateMany({where:{id:order.id,status:'pending'},data:{status:'review',review_reason:'CHECKOUT_CREATING'}});
+      if(!claim.count)throw Object.assign(new Error('Seu checkout está em processamento. Se não abrir em alguns minutos, fale com o suporte.'),{statusCode:409});
+    }
+    try{
+      const result=await provider.createCheckout({orderPublicId:order.public_id,amount:String(order.expected_amount),currency:order.currency,billingPeriod:order.billing_period_days===365?'yearly':'monthly',paymentMethod:order.payment_method==='card'?'card':'pix',customer:{name:order.customer_name,phone:order.customer_phone,email:order.customer_email??undefined},description:`Torrinco ${order.plans.name}`});
+      return await prisma.$transaction(async tx=>{
+        const checkout=await tx.billing_checkouts.create({data:{order_id:order.id,provider:provider.name,external_checkout_id:result.externalCheckoutId,checkout_url:result.checkoutUrl,expires_at:result.expiresAt}});
+        await tx.commerce_orders.update({where:{id:order.id},data:{status:'checkout_created',review_reason:null}});
+        return checkout;
+      });
+    }catch(error){
+      // A timeout can leave a live checkout at the gateway. Keep the reservation for review.
+      throw error;
+    }
+  }
   static async processWebhook(provider:BillingProvider,rawBody:Buffer,headers:Record<string,string|string[]|undefined>){
     const mapped=await provider.validateAndMapWebhook(rawBody,headers);
     const inbox=await receiveBillingEvent(provider.name,mapped.providerEventId,mapped.type,mapped.raw);if(inbox.duplicate&&inbox.event?.status!=='failed')return{duplicate:true,status:inbox.event?.status};
@@ -21,6 +42,7 @@ export class BillingOrchestratorService {
     catch(error:any){await prisma.billing_webhook_events.update({where:{id:inbox.event!.id},data:{status:'failed',attempts:{increment:1},error_message:String(error?.message??error).slice(0,2000)}});if(mapped.orderPublicId)await prisma.commerce_orders.updateMany({where:{public_id:mapped.orderPublicId,status:'review',review_reason:'PROVISIONING_IN_PROGRESS'},data:{status:'checkout_created',review_reason:null}});throw error}
   }
   private static async applyEvent(provider:string,event:InternalBillingEvent){
+    if(event.type==='checkout.ignored')return{processed:true,ignored:'SUBSCRIPTION_CHECKOUT_EVENT'};
     const checkout=event.externalCheckoutId?await prisma.billing_checkouts.findUnique({where:{provider_external_checkout_id:{provider,external_checkout_id:event.externalCheckoutId}}}):null;
     const order=checkout?await prisma.commerce_orders.findUnique({where:{id:checkout.order_id},include:{plans:true}}):event.orderPublicId?await prisma.commerce_orders.findUnique({where:{public_id:event.orderPublicId},include:{plans:true}}):null;
     if(!order)return{review:true,reviewReason:'UNKNOWN_ORDER'};
@@ -31,6 +53,7 @@ export class BillingOrchestratorService {
     if(event.type==='payment.pending'){await this.upsertPayment(provider,order.id,event,'pending');return{processed:true}}
     if(event.type==='payment.failed'){if(order.status!=='paid'&&order.status!=='refunded')await prisma.commerce_orders.update({where:{id:order.id},data:{status:'failed'}});await this.upsertPayment(provider,order.id,event,'failed');return{processed:true}}
     if(event.type==='payment.approved'||event.type==='subscription.activated'){
+      if(provider==='abacatepay'&&((event.type==='payment.approved'&&order.payment_method!=='pix')||(event.type==='subscription.activated'&&order.payment_method!=='card')))return this.review(order.id,'PAYMENT_METHOD_MISMATCH');
       if(event.amount==null||!event.currency)return this.review(order.id,'PAYMENT_AMOUNT_MISSING');
       if(provider==='abacatepay'&&(!event.externalCheckoutId||(event.type==='subscription.activated'&&!event.externalSubscriptionId?.startsWith('subs_'))))return this.review(order.id,'PAYMENT_REFERENCE_MISSING');
       const claimed=await prisma.commerce_orders.updateMany({where:{id:order.id,status:{in:['pending','checkout_created','failed']}},data:{status:'review',review_reason:'PROVISIONING_IN_PROGRESS'}});if(claimed.count===0)return{processed:true,ignored:'ALREADY_ACTIVATED_OR_PROCESSING'};

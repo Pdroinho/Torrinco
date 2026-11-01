@@ -70,7 +70,7 @@ export class AccountProvisioningService {
       if (input.billing) {
         const b=input.billing;
         await tx.accounts.updateMany({where:{id:account.id,access_status:'suspended',access_suspension_reason:'payment_refunded'},data:{access_status:'enabled',access_suspended_at:null,access_suspension_reason:null,access_suspended_by_user_id:null}});
-        await tx.commerce_orders.update({where:{id:input.orderId},data:{user_id:user.id,account_id:account.id,status:'paid',review_reason:null}});
+        await tx.commerce_orders.update({where:{id:input.orderId},data:{user_id:user.id,account_id:account.id,status:'paid',review_reason:null,open_card_key:null}});
         await tx.billing_subscriptions.upsert({where:{provider_external_subscription_id:{provider:b.provider,external_subscription_id:b.externalSubscriptionId}},create:{order_id:input.orderId,account_id:account.id,provider:b.provider,external_customer_id:b.externalCustomerId,external_subscription_id:b.externalSubscriptionId,status:'active',current_period_starts_at:b.occurredAt,current_period_ends_at:account.current_period_ends_at,last_event_at:b.occurredAt},update:{status:'active',current_period_ends_at:account.current_period_ends_at,last_event_at:b.occurredAt}});
       }
       return {account,user,plan,invitation,plainToken:invitation?plainToken:undefined};

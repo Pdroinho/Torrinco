@@ -5,17 +5,27 @@ import { prisma } from '../lib/prisma.js';
 import { AbacatePayProvider } from '../billing/abacatepay.provider.js';
 import { BillingOrchestratorService } from '../services/billing-orchestrator.service.js';
 import { z } from 'zod';
+import crypto from 'node:crypto';
 export class SubscriptionController {
   static async overview(req: JwtRequest, res: Response, next: NextFunction) { try { res.json(await getSubscriptionOverview(req.accountId!)); } catch (e) { next(e); } }
   static async checkout(req: JwtRequest, res: Response, next: NextFunction) {
     try {
       if (req.userRole !== 'owner' && req.userRole !== 'admin') return res.status(403).json({error:'Admin requerido'});
-      const input = z.object({billingPeriod:z.enum(['monthly','yearly']),idempotencyKey:z.uuid(),email:z.email()}).parse(req.body);
+      const input = z.object({billingPeriod:z.enum(['monthly','yearly']),paymentMethod:z.enum(['pix','card']).default('pix'),idempotencyKey:z.uuid(),email:z.email()}).parse(req.body);
       const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}}});
       if (active) return res.status(409).json({error:'Já existe uma assinatura recorrente ativa.'});
+      if (input.paymentMethod === 'card') {
+        const account = await prisma.accounts.findUniqueOrThrow({where:{id:req.accountId!},select:{current_period_ends_at:true}});
+        const pixPaid = await prisma.billing_subscriptions.count({where:{account_id:req.accountId!,provider:'abacatepay',external_subscription_id:{startsWith:'order:'},status:'active'}});
+        if (pixPaid && account.current_period_ends_at && account.current_period_ends_at > new Date()) return res.status(409).json({error:'Você já tem um período pago por Pix. A assinatura no cartão poderá começar após o vencimento.'});
+      }
       const user = await prisma.users.findUniqueOrThrow({where:{id:req.userId!}});
-      const order = await BillingOrchestratorService.createOrder({idempotencyKey:input.idempotencyKey,planName:'individual',billingPeriod:input.billingPeriod,name:user.name??'Cliente Torrinco',phone:user.phone_number,email:input.email,userId:user.id,accountId:req.accountId});
-      if(order.account_id!==req.accountId||order.user_id!==req.userId||order.billing_period_days!==(input.billingPeriod==='yearly'?365:30))return res.status(409).json({error:'Chave de solicitação já utilizada.'});
+      if(input.paymentMethod==='pix'){
+        const key=crypto.createHash('sha256').update(user.phone_number.replace(/\D/g,'')).digest('hex');
+        if(await prisma.commerce_orders.findUnique({where:{open_card_key:key}}))return res.status(409).json({error:'Você já tem um checkout de cartão pendente. Finalize-o ou fale com o suporte.'});
+      }
+      const order = await BillingOrchestratorService.createOrder({idempotencyKey:input.idempotencyKey,planName:'individual',billingPeriod:input.billingPeriod,paymentMethod:input.paymentMethod,name:user.name??'Cliente Torrinco',phone:user.phone_number,email:input.email,userId:user.id,accountId:req.accountId});
+      if(order.account_id!==req.accountId||order.user_id!==req.userId||order.payment_method!==input.paymentMethod||order.billing_period_days!==(input.billingPeriod==='yearly'?365:30))return res.status(409).json({error:'Chave de solicitação já utilizada.'});
       const checkout=await BillingOrchestratorService.createCheckout(order.public_id,new AbacatePayProvider());
       return res.json({url:checkout.checkout_url});
     } catch(e){next(e)}
@@ -23,7 +33,7 @@ export class SubscriptionController {
   static async cancel(req: JwtRequest, res: Response, next: NextFunction) {
     try {
       if (req.userRole !== 'owner' && req.userRole !== 'admin') return res.status(403).json({ error: 'Admin requerido' });
-      const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',status:{in:['active','past_due']}},orderBy:{created_at:'desc'}});
+      const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}},orderBy:{created_at:'desc'}});
       if (active) {
         if (!active.external_subscription_id?.startsWith('subs_')) return res.status(409).json({error:'Assinatura sem identificador externo. Contate o suporte.'});
         await new AbacatePayProvider().cancelSubscription(active.external_subscription_id);

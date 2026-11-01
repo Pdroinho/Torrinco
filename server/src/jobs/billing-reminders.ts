@@ -16,7 +16,10 @@ export async function sendBillingReminders(now = new Date()) {
   const start = new Date(now.getTime() - 4 * 86_400_000);
   const end = new Date(now.getTime() + 4 * 86_400_000);
   const accounts = await prisma.accounts.findMany({
-    where: { status: 'active', access_status:'enabled', current_period_ends_at: { gte: start, lte: end }, billing_subscriptions: { some: { provider: 'abacatepay', external_subscription_id: { startsWith: 'order:' } } } },
+    where: { status: 'active', access_status:'enabled', current_period_ends_at: { gte: start, lte: end }, billing_subscriptions: {
+      some: { provider: 'abacatepay', external_subscription_id: { startsWith: 'order:' } },
+      none: { provider: 'abacatepay', external_subscription_id: { startsWith: 'subs_' }, status: { in: ['active','past_due'] } },
+    } },
     select: { id:true, current_period_ends_at:true, users:{where:{role:'owner',status:'active'},select:{id:true,phone_number:true},take:1} },
   });
   let sent = 0;

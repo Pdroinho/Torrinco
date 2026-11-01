@@ -20,6 +20,7 @@ const checkoutLimiter = rateLimit({
 const requestSchema = z.object({
   idempotencyKey: z.uuid(),
   billingPeriod: z.enum(['monthly', 'yearly']),
+  paymentMethod: z.enum(['pix', 'card']).default('pix'),
   name: z.string().trim().min(2).max(100),
   phone: z.string().regex(/^[+()\d\s-]{10,30}$/),
   email: z.email().max(150),
@@ -34,13 +35,22 @@ router.post('/checkout', (req, res, next) => {
 }, checkoutLimiter, async (req, res, next) => {
   try {
     const input = requestSchema.parse(req.body);
+    if (input.paymentMethod === 'pix') {
+      const key=crypto.createHash('sha256').update(input.phone.replace(/\D/g,'')).digest('hex');
+      if (await prisma.commerce_orders.findUnique({where:{open_card_key:key}})) return res.status(409).json({error:'Você já tem um checkout de cartão pendente. Finalize-o ou fale com o suporte.'});
+    }
     const existingUser = await prisma.users.findUnique({where:{phone_number:input.phone.replace(/\D/g,'')}});
     if (existingUser && await prisma.billing_subscriptions.count({where:{account_id:existingUser.account_id,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}}})) {
       return res.status(409).json({error:'Já existe assinatura recorrente para este WhatsApp. Entre no app para gerenciá-la.'});
     }
+    if (existingUser && input.paymentMethod === 'card') {
+      const account = await prisma.accounts.findUnique({where:{id:existingUser.account_id},select:{current_period_ends_at:true}});
+      const pixPaid = await prisma.billing_subscriptions.count({where:{account_id:existingUser.account_id,provider:'abacatepay',external_subscription_id:{startsWith:'order:'},status:'active'}});
+      if (pixPaid && account?.current_period_ends_at && account.current_period_ends_at > new Date()) return res.status(409).json({error:'Você já tem um período pago por Pix. A assinatura no cartão poderá começar após o vencimento.'});
+    }
     const order = await BillingOrchestratorService.createOrder({ ...input, planName: 'individual' });
-    if (order.customer_phone !== input.phone.replace(/\D/g, '') || order.customer_email?.toLowerCase() !== input.email.toLowerCase() || order.billing_period_days !== (input.billingPeriod === 'yearly' ? 365 : 30)) {
-      return res.status(409).json({ error: 'Idempotency key belongs to another request' });
+    if (order.customer_phone !== input.phone.replace(/\D/g, '') || order.customer_email?.toLowerCase() !== input.email.toLowerCase() || order.payment_method !== input.paymentMethod || order.billing_period_days !== (input.billingPeriod === 'yearly' ? 365 : 30)) {
+      return res.status(409).json({ error: 'Você já tem um checkout pendente com outros dados. Finalize-o ou fale com o suporte.' });
     }
     const checkout = await BillingOrchestratorService.createCheckout(order.public_id, new AbacatePayProvider());
     return res.json({ url: checkout.checkout_url });
