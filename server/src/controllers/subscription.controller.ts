@@ -6,12 +6,13 @@ import { AbacatePayProvider } from '../billing/abacatepay.provider.js';
 import { BillingOrchestratorService } from '../services/billing-orchestrator.service.js';
 import { z } from 'zod';
 import crypto from 'node:crypto';
+import { validTaxId } from '../billing/tax-id.js';
 export class SubscriptionController {
   static async overview(req: JwtRequest, res: Response, next: NextFunction) { try { res.json(await getSubscriptionOverview(req.accountId!)); } catch (e) { next(e); } }
   static async checkout(req: JwtRequest, res: Response, next: NextFunction) {
     try {
       if (req.userRole !== 'owner' && req.userRole !== 'admin') return res.status(403).json({error:'Admin requerido'});
-      const input = z.object({billingPeriod:z.enum(['monthly','yearly']),paymentMethod:z.enum(['pix','card']).default('pix'),idempotencyKey:z.uuid(),email:z.email()}).parse(req.body);
+      const input = z.object({billingPeriod:z.enum(['monthly','yearly']),paymentMethod:z.enum(['pix','card']).default('pix'),idempotencyKey:z.uuid(),email:z.email(),taxId:z.string().max(18).refine(validTaxId).optional()}).parse(req.body);
       const active = await prisma.billing_subscriptions.findFirst({where:{account_id:req.accountId!,provider:'abacatepay',external_subscription_id:{startsWith:'subs_'},status:{in:['active','past_due']}}});
       if (active) return res.status(409).json({error:'Já existe uma assinatura recorrente ativa.'});
       if (input.paymentMethod === 'card') {
@@ -26,7 +27,7 @@ export class SubscriptionController {
       }
       const order = await BillingOrchestratorService.createOrder({idempotencyKey:input.idempotencyKey,planName:'individual',billingPeriod:input.billingPeriod,paymentMethod:input.paymentMethod,name:user.name??'Cliente Torrinco',phone:user.phone_number,email:input.email,userId:user.id,accountId:req.accountId});
       if(order.account_id!==req.accountId||order.user_id!==req.userId||order.payment_method!==input.paymentMethod||order.billing_period_days!==(input.billingPeriod==='yearly'?365:30))return res.status(409).json({error:'Chave de solicitação já utilizada.'});
-      const checkout=await BillingOrchestratorService.createCheckout(order.public_id,new AbacatePayProvider());
+      const checkout=await BillingOrchestratorService.createCheckout(order.public_id,new AbacatePayProvider(),input.taxId);
       return res.json({url:checkout.checkout_url});
     } catch(e){next(e)}
   }

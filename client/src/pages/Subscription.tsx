@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { formatInstantDateLong } from '../lib/local-date';
+import { formatTaxId, validTaxId } from '../lib/tax-id';
 
 type Overview = {
   status: string;
@@ -18,6 +19,7 @@ const money = (value: string | number | null) => value == null ? 'Indisponível'
 export function Subscription() {
   const [data, setData] = useState<Overview | null>(null);
   const [email, setEmail] = useState('');
+  const [taxId, setTaxId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'card'|'pix'>('card');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,11 +28,12 @@ export function Subscription() {
   useEffect(() => { api.get('/subscription').then(response => setData(response.data)).catch(() => setError('Não foi possível carregar a assinatura.')); }, []);
 
   async function buy(period: 'monthly' | 'yearly') {
+    if (!validTaxId(taxId)) { setError('Informe um CPF ou CNPJ válido.'); return; }
     setBusy(true); setError('');
     try {
-      const key = `${period}:${paymentMethod}:${email.trim().toLowerCase()}`;
+      const key = `${period}:${paymentMethod}:${email.trim().toLowerCase()}:${taxId.replace(/\D/g, '')}`;
       keys.current[key] ??= crypto.randomUUID();
-      const response = await api.post('/subscription/checkout', { billingPeriod: period, paymentMethod, email, idempotencyKey: keys.current[key] });
+      const response = await api.post('/subscription/checkout', { billingPeriod: period, paymentMethod, email, taxId, idempotencyKey: keys.current[key] });
       window.location.assign(response.data.url);
     } catch (err: any) { setError(err?.response?.status === 409 && typeof err.response.data?.error === 'string' ? err.response.data.error : 'Não foi possível iniciar o pagamento. Confira o e-mail e tente novamente.'); setBusy(false); }
   }
@@ -68,6 +71,7 @@ export function Subscription() {
         : data.recurring?.status === 'cancelled' && data.access.allowed ? <p className="mt-2">Renovação cancelada. Seu acesso continua até {formatDate(data.recurring.currentPeriodEndsAt)}.</p>
         : <div className="mt-4 max-w-md space-y-3">
           <label className="block text-sm">E-mail para a cobrança<input required type="email" value={email} onChange={event => setEmail(event.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+          <label className="block text-sm">CPF ou CNPJ<input required inputMode="numeric" autoComplete="off" value={taxId} onChange={event => setTaxId(formatTaxId(event.target.value))} className="mt-1 w-full rounded-lg border p-2" /></label>
           <fieldset className="flex flex-wrap gap-4"><legend className="mb-2 text-sm font-semibold">Forma de pagamento</legend>
             <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='card'} onChange={()=>setPaymentMethod('card')} /> Cartão de crédito</label>
             <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='pix'} onChange={()=>setPaymentMethod('pix')} /> Pix</label>

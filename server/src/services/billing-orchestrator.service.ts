@@ -15,7 +15,7 @@ export class BillingOrchestratorService {
     const amount=input.billingPeriod==='yearly'?plan.price_yearly:plan.price_monthly;if(amount==null)throw Object.assign(new Error('PLAN_PRICE_NOT_CONFIGURED'),{statusCode:409});
     try{return await prisma.commerce_orders.create({data:{public_id:crypto.randomUUID(),idempotency_key:input.idempotencyKey,open_card_key:openCardKey,user_id:input.userId,account_id:input.accountId,plan_id:plan.id,customer_name:input.name,customer_phone:AccountProvisioningService.normalizePhone(input.phone),customer_email:input.email,expected_amount:amount,currency:'BRL',payment_method:input.paymentMethod??'pix',billing_period_days:input.billingPeriod==='yearly'?365:30}})}catch(error:any){if(error?.code!=='P2002')throw error;const prior=await prisma.commerce_orders.findUnique({where:{idempotency_key:input.idempotencyKey}});if(prior)return prior;if(openCardKey){const pending=await prisma.commerce_orders.findUnique({where:{open_card_key:openCardKey}});if(pending)return pending;}throw error};
   }
-  static async createCheckout(orderPublicId:string,provider:BillingProvider){
+  static async createCheckout(orderPublicId:string,provider:BillingProvider,taxId?:string){
     const order=await prisma.commerce_orders.findUnique({where:{public_id:orderPublicId},include:{plans:true}});if(!order)throw Object.assign(new Error('ORDER_NOT_FOUND'),{statusCode:404});
     const existing=await prisma.billing_checkouts.findFirst({where:{order_id:order.id,provider:provider.name}});
     if(existing){if(order.payment_method==='card'){const remote=await provider.getStatus(existing.external_checkout_id);if(remote.status!=='PENDING')throw Object.assign(new Error('Este pagamento não está mais pendente. Entre em contato com o suporte para continuar.'),{statusCode:409});}return existing;}
@@ -24,7 +24,7 @@ export class BillingOrchestratorService {
       if(!claim.count)throw Object.assign(new Error('Seu checkout está em processamento. Se não abrir em alguns minutos, fale com o suporte.'),{statusCode:409});
     }
     try{
-      const result=await provider.createCheckout({orderPublicId:order.public_id,amount:String(order.expected_amount),currency:order.currency,billingPeriod:order.billing_period_days===365?'yearly':'monthly',paymentMethod:order.payment_method==='card'?'card':'pix',customer:{name:order.customer_name,phone:order.customer_phone,email:order.customer_email??undefined},description:`Torrinco ${order.plans.name}`});
+      const result=await provider.createCheckout({orderPublicId:order.public_id,amount:String(order.expected_amount),currency:order.currency,billingPeriod:order.billing_period_days===365?'yearly':'monthly',paymentMethod:order.payment_method==='card'?'card':'pix',customer:{name:order.customer_name,phone:order.customer_phone,email:order.customer_email??undefined,taxId},description:`Torrinco ${order.plans.name}`});
       return await prisma.$transaction(async tx=>{
         const checkout=await tx.billing_checkouts.create({data:{order_id:order.id,provider:provider.name,external_checkout_id:result.externalCheckoutId,checkout_url:result.checkoutUrl,expires_at:result.expiresAt}});
         await tx.commerce_orders.update({where:{id:order.id},data:{status:'checkout_created',review_reason:null}});

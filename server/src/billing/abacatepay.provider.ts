@@ -62,6 +62,7 @@ export class AbacatePayProvider implements BillingProvider {
       name: request.customer.name,
       email: request.customer.email,
       cellphone,
+      ...(request.customer.taxId ? { taxId: request.customer.taxId.replace(/\D/g, '') } : {}),
     });
     if (!customer.id?.startsWith('cust_')) throw new Error('INVALID_ABACATEPAY_CUSTOMER_RESPONSE');
     const checkout = await this.request<{ id: string; url: string; amount: number; items: Array<{id:string;quantity:number}> }>(

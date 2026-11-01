@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { validTaxId } from '../billing/tax-id.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
@@ -21,6 +22,7 @@ const requestSchema = z.object({
   idempotencyKey: z.uuid(),
   billingPeriod: z.enum(['monthly', 'yearly']),
   paymentMethod: z.enum(['pix', 'card']).default('pix'),
+  taxId: z.string().max(18).refine(validTaxId, 'CPF ou CNPJ inválido').optional(),
   name: z.string().trim().min(2).max(100),
   phone: z.string().regex(/^[+()\d\s-]{10,30}$/),
   email: z.email().max(150),
@@ -52,7 +54,7 @@ router.post('/checkout', (req, res, next) => {
     if (order.customer_phone !== input.phone.replace(/\D/g, '') || order.customer_email?.toLowerCase() !== input.email.toLowerCase() || order.payment_method !== input.paymentMethod || order.billing_period_days !== (input.billingPeriod === 'yearly' ? 365 : 30)) {
       return res.status(409).json({ error: 'Você já tem um checkout pendente com outros dados. Finalize-o ou fale com o suporte.' });
     }
-    const checkout = await BillingOrchestratorService.createCheckout(order.public_id, new AbacatePayProvider());
+    const checkout = await BillingOrchestratorService.createCheckout(order.public_id, new AbacatePayProvider(), input.taxId);
     return res.json({ url: checkout.checkout_url });
   } catch (error) { next(error); }
 });
