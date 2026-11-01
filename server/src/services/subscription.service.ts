@@ -50,7 +50,9 @@ export function evaluateAccountAccess(account: {
     return { allowed: false, status: 'expired', accessStatus, reason: 'SUBSCRIPTION_EXPIRED', inGracePeriod: false, accessEndsAt: graceEnd ?? end };
   }
   if (status === 'past_due') {
-    const end = account.grace_period_ends_at ?? null;
+    const paidEnd = account.current_period_ends_at ?? null;
+    const configuredEnd = paidEnd && configuredGracePeriodDays() > 0 ? new Date(paidEnd.getTime() + configuredGracePeriodDays() * 86_400_000) : null;
+    const end = account.grace_period_ends_at ?? configuredEnd ?? paidEnd;
     return end && end.getTime() > now.getTime()
       ? { allowed: true, status, accessStatus, reason: null, inGracePeriod: true, accessEndsAt: end }
       : { allowed: false, status, accessStatus, reason: 'PAYMENT_OVERDUE', inGracePeriod: false, accessEndsAt: end };
@@ -122,12 +124,13 @@ export async function changeSubscriptionStatus(accountId: number, newStatus: Sub
 
 export async function getSubscriptionOverview(accountId: number) {
   const entitlement = await getAccountEntitlements(accountId);
-  const [users, cards, history, availablePlans] = await Promise.all([
+  const [users, cards, history, availablePlans, recurring] = await Promise.all([
     prisma.users.count({ where: { account_id: accountId, status: 'active' } }),
     prisma.financial_entities.count({ where: { account_id: accountId, type: 'credit_card' } }),
     prisma.subscription_history.findMany({ where: { account_id: accountId }, orderBy: { created_at: 'desc' }, take: 25 }),
     // Somente individual esta comercialmente liberado. Precos permanecem os persistidos.
-    prisma.plans.findMany({ where: { name: 'individual', status: 'active' }, orderBy: { id: 'asc' } })
+    prisma.plans.findMany({ where: { name: 'individual', status: 'active' }, orderBy: { id: 'asc' } }),
+    prisma.billing_subscriptions.findFirst({where:{account_id:accountId,provider:'abacatepay'},orderBy:{created_at:'desc'},select:{status:true,current_period_ends_at:true}}),
   ]);
   return {
     status: entitlement.access.status,
@@ -137,6 +140,6 @@ export async function getSubscriptionOverview(accountId: number) {
     dates: { trialEndsAt: entitlement.account.trial_ends_at, currentPeriodEndsAt: entitlement.account.current_period_ends_at, gracePeriodEndsAt: entitlement.account.grace_period_ends_at, cancelledAt: entitlement.account.cancelled_at },
     availablePlans,
     history,
-    commercialPending: ['Forma de cobranca e regras de reativacao aguardam definicao comercial.']
+    recurring: recurring ? {status:recurring.status,currentPeriodEndsAt:recurring.current_period_ends_at} : null,
   };
 }

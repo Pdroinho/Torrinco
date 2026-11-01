@@ -1,14 +1,14 @@
 export type InternalBillingEventType =
   | 'checkout.created' | 'payment.pending' | 'payment.approved' | 'payment.failed'
-  | 'subscription.activated' | 'subscription.past_due' | 'subscription.cancelled' | 'payment.refunded';
+  | 'subscription.activated' | 'subscription.renewed' | 'subscription.past_due' | 'subscription.cancelled' | 'payment.refunded';
 
-export interface CheckoutRequest { orderPublicId:string; amount:string; currency:string; customer:{name:string;phone:string;email?:string}; description:string }
+export interface CheckoutRequest { orderPublicId:string; amount:string; currency:string; billingPeriod:'monthly'|'yearly'; customer:{name:string;phone:string;email?:string}; description:string }
 export interface CheckoutResult { externalCheckoutId:string; checkoutUrl:string; expiresAt?:Date }
 export interface ProviderStatus { status:string; externalId:string }
 export interface InternalBillingEvent {
   providerEventId:string; type:InternalBillingEventType; orderPublicId:string; occurredAt:Date;
   externalCheckoutId?:string; externalPaymentId?:string; externalCustomerId?:string; externalSubscriptionId?:string;
-  amount?:string; currency?:string; planReference?:string; raw:unknown;
+  amount?:string; currency?:string; planReference?:string; currentPeriodEndsAt?:Date; raw:unknown;
 }
 export interface BillingProvider {
   readonly name:string;

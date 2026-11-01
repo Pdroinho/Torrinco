@@ -12,8 +12,8 @@ export const errorHandler = (
   const occurrenceId = randomUUID();
   console.error(`[${occurrenceId}] Unhandled request error`, {
     method: req.method,
-    path: req.originalUrl,
-    error,
+    path: req.path,
+    error: error instanceof Error ? { name: error.name, message: error.message, code: (error as any).code } : 'unknown',
   });
 
   if (error.code === 'P2002') {

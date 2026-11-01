@@ -1,61 +1,26 @@
-# Arquitetura de cobrança agnóstica
+# Cobrança recorrente AbacatePay v2
 
-Nenhum gateway real está instalado ou habilitado. O retorno do navegador nunca ativa uma conta. Somente um webhook validado no backend pode produzir `payment.approved` ou `subscription.activated` e chamar o `AccountProvisioningService`.
+O checkout da landing chama `POST /api/billing/checkout` de servidor para servidor, com `BILLING_INTERNAL_SECRET`. O app autenticado usa `POST /api/subscription/checkout`. Ambos criam um pedido idempotente com o preço de `plans`, selecionam um produto recorrente por ciclo e validam o valor devolvido pelo gateway. O navegador só recebe a URL hospedada. A chave de produção fica exclusivamente no backend.
 
-## Onde conectar o futuro gateway
+O webhook `POST /api/billing/webhook/abacatepay` recebe corpo bruto antes de `express.json()`, confere `webhookSecret` e HMAC, deduplica por `log_...` e localiza o pedido por checkout `bill_...`. Somente `subscription.completed` com valor e referência esperados ativa/provisiona a conta. `subscription.renewed` estende o período; falha, cancelamento e reembolso alteram acesso conforme as regras do serviço. O retorno `/obrigado` não libera conta.
 
-1. Implemente `BillingProvider` em `src/billing/<provider>.provider.ts`.
-2. Valide assinatura, timestamp, origem e tolerância contra replay dentro de `validateAndMapWebhook`.
-3. Converta eventos externos para os eventos de `src/billing/types.ts`.
-4. Monte `createBillingWebhookRouter(provider)` em `server.ts` **antes** de `express.json()`, usando `express.raw({type:'application/json'})` exclusivamente nessa rota. O corpo bruto é obrigatório para validar assinaturas.
-5. Configure segredos somente por variáveis de ambiente do deploy.
+## Configuração de produção
 
-Não monte `FakeBillingProvider`: o construtor bloqueia qualquer ambiente diferente de `test`.
+1. O preço anual escolhido é R$ 119,88. O seed e a landing estão alinhados; atualize o registro `plans` no banco de produção, que ainda estava em R$ 199,00 na auditoria.
+2. Crie dois produtos v2 com preço em centavos: `cycle: MONTHLY` e `cycle: ANNUALLY`. Registre seus IDs em `ABACATEPAY_MONTHLY_PRODUCT_ID` e `ABACATEPAY_YEARLY_PRODUCT_ID`.
+3. Configure no servidor `ABACATEPAY_API_KEY`, os IDs dos produtos, `ABACATEPAY_WEBHOOK_SECRET`, `BILLING_INTERNAL_SECRET`, `PUBLIC_APP_URL` e `PUBLIC_LANDING_URL`. O Compose do Coolify lista os nomes; os valores devem ficar apenas nos secrets do recurso.
+4. Crie webhook v2 para `subscription.completed`, `subscription.renewed`, `subscription.payment_failed`, `subscription.cancelled` e `checkout.refunded`, apontando para a URL HTTPS pública da API em `/api/billing/webhook/abacatepay`. Use o mesmo secret do passo anterior.
+5. Configure `BILLING_API_URL` e o mesmo `BILLING_INTERNAL_SECRET` na landing. Remova qualquer webhook antigo que aponte para a rota legada da landing.
+6. Teste checkout, pagamento, provisionamento, renovação, falha e cancelamento em dev mode antes de habilitar a chave de produção. Confira um checkout real de baixo valor somente com autorização operacional apropriada.
 
-## Fluxo do checkout
+O cancelamento no app interrompe cobranças futuras no gateway. O acesso já pago segue até `current_period_ends_at`; a reativação local de assinatura externa é bloqueada e exige novo checkout.
 
-`BillingOrchestratorService.createOrder` recebe uma referência de plano conhecida pelo servidor. O backend busca o plano e o preço em `plans`; `plan_id`, valor e status do frontend não são aceitos. `createCheckout` passa ao gateway o pedido já fechado e persiste o ID externo.
-
-O checkout pode redirecionar o navegador, mas esse retorno serve apenas para exibir “processando”. A liberação ocorre após:
-
-1. validação criptográfica pelo provider;
-2. inserção idempotente em `billing_webhook_events`;
-3. localização do pedido;
-4. comparação de plano, moeda e valor;
-5. reivindicação atômica do pedido;
-6. provisionamento ou ativação pelo `AccountProvisioningService`.
-
-## Estados separados
-
-- Pedido: `commerce_orders.status`.
-- Checkout: `billing_checkouts.status`.
-- Pagamento: `billing_payments.status`.
-- Assinatura externa: `billing_subscriptions.status`.
-- Acesso da conta: `accounts.status`.
-
-Uma identidade pode participar de várias contas por `account_members`. Durante a migração, `users.account_id` continua representando a conta principal para compatibilidade com JWTs existentes.
-
-## Eventos internos
-
-- `checkout.created`
-- `payment.pending`
-- `payment.approved`
-- `payment.failed`
-- `subscription.activated`
-- `subscription.past_due`
-- `subscription.cancelled`
-- `payment.refunded`
-
-Eventos desconhecidos, pedidos ausentes ou divergência de plano/valor/moeda ficam com estado `review` e não concedem acesso. Eventos anteriores a `last_event_at` não regridem a assinatura. Reembolso usa `BILLING_REFUND_POLICY=suspend` por padrão; `keep_until_period_end` preserva acesso até a política comercial ser executada. Dados não são apagados por cancelamento, inadimplência ou estorno.
-
-## Dados armazenados
-
-São persistidos IDs externos de checkout, pagamento, cliente, assinatura e evento. Payloads de webhook passam por sanitização recursiva de campos de cartão, CVV, tokens, senhas, segredos e autorização. O Torrinco não armazena dados completos de cartão e não cria senha para o cliente; usuários sem senha recebem convite de primeiro acesso com hash SHA-256.
-
-## Testes
+## Verificação local
 
 ```powershell
-npm test -- --run tests/billing-orchestrator.test.ts
+npx.cmd prisma generate
+npm.cmd run build
+$env:JWT_SECRET='local-test-secret-at-least-32-characters'; npm.cmd test
 ```
 
-O teste demonstra criação de checkout, ativação de cliente novo, nova conta para identidade existente, conversão de trial, duplicidade, revisão, eventos fora de ordem, reembolso e rejeição de assinatura inválida.
+`FakeBillingProvider` continua restrito a testes. Dados completos do cartão não entram na aplicação.

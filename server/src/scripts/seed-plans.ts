@@ -13,7 +13,7 @@ async function main() {
       max_users: 1,
       max_cards: 5,
       price_monthly: 19.90,
-      price_yearly: 199.00,
+      price_yearly: 119.88,
       features: { calendar: true, ai: true, import: true, installments: true },
       status: 'active'
     },

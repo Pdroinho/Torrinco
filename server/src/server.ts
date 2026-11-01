@@ -22,6 +22,7 @@ import webhookRoutes from './routes/webhooks.routes.js';
 import googleRoutes from './routes/google.routes.js';
 import userDataRoutes from './routes/user_data.routes.js';
 import subscriptionRoutes from './routes/subscription.routes.js';
+import billingRoutes from './routes/billing.routes.js';
 import platformAdminRoutes from './routes/platform-admin.routes.js';
 import invitationRoutes from './routes/invitation.routes.js';
 import importsRoutes from './routes/imports.routes.js';
@@ -29,6 +30,8 @@ import { LegalController } from './controllers/legal.controller.js';
 import { apiLimiter } from './middleware/rate-limiter.js';
 import { schedulerHealthSnapshot } from './services/job-runtime.service.js';
 import { configureTrustProxy } from './config/trust-proxy.js';
+import { createBillingWebhookRouter } from './billing/webhook-router.js';
+import { AbacatePayProvider } from './billing/abacatepay.provider.js';
 
 dotenv.config();
 
@@ -91,6 +94,8 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
+// O corpo bruto e necessario para validar a assinatura HMAC do AbacatePay.
+app.use('/api/billing/webhook/abacatepay', express.raw({ type: 'application/json', limit: '256kb' }), createBillingWebhookRouter(new AbacatePayProvider()));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -150,6 +155,7 @@ app.use('/api/agent', agentRoutes);
 app.use('/api/google', googleRoutes);
 app.use('/api/user', userDataRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/billing', billingRoutes);
 app.use('/api/platform-admin', platformAdminRoutes);
 app.use('/api/invitations', invitationRoutes);
 app.use('/api/imports', importsRoutes);

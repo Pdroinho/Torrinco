@@ -4,6 +4,7 @@ import { authenticateIdentity } from '../middleware/identity.js';
 const router = Router();
 router.use(authenticateIdentity);
 router.get('/', SubscriptionController.overview);
+router.post('/checkout', SubscriptionController.checkout);
 router.post('/cancel', SubscriptionController.cancel);
 router.post('/reactivate', SubscriptionController.reactivate);
 export default router;

@@ -49,6 +49,8 @@ export class AccountProvisioningService {
       if(!plan||plan.status!=='active')throw new Error('ORDER_PLAN_NOT_AVAILABLE');
       let user=input.existingUserId?await tx.users.findUnique({where:{id:input.existingUserId}}):await tx.users.findUnique({where:{phone_number:phone}});
       let account=input.existingAccountId?await tx.accounts.findUnique({where:{id:input.existingAccountId}}):null;
+      if(user&&!account)account=await tx.accounts.findUnique({where:{id:user.account_id}});
+      if(user&&account&&user.account_id!==account.id)throw new Error('ORDER_ACCOUNT_MISMATCH');
       const previousStatus=account?.status??null;
       if(!account)account=await tx.accounts.create({data:{name:input.name,plan_id:plan.id,status:'active',current_period_ends_at:input.periodEndsAt,origin:'checkout'}});
       else account=await tx.accounts.update({where:{id:account.id},data:{plan_id:plan.id,status:'active',trial_ends_at:null,current_period_ends_at:input.periodEndsAt,cancelled_at:null,grace_period_ends_at:null}});
