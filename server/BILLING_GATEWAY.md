@@ -15,6 +15,8 @@ O webhook `POST /api/billing/webhook/abacatepay` recebe corpo bruto antes de `ex
 
 O cancelamento no app interrompe cobranças futuras no gateway. O acesso já pago segue até `current_period_ends_at`; a reativação local de assinatura externa é bloqueada e exige novo checkout.
 
+Em uma implantação paralela ligada ao mesmo banco, defina `SCHEDULER_ENABLED=false` em uma das instâncias para evitar jobs duplicados.
+
 ## Verificação local
 
 ```powershell
