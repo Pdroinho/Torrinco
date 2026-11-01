@@ -52,11 +52,21 @@ export class AbacatePayProvider implements BillingProvider {
     if (request.currency !== 'BRL') throw new Error('UNSUPPORTED_CURRENCY');
     const productId = configured(request.billingPeriod === 'yearly' ? 'ABACATEPAY_PIX_YEARLY_PRODUCT_ID' : 'ABACATEPAY_PIX_MONTHLY_PRODUCT_ID');
     const landingUrl = configured('PUBLIC_LANDING_URL').replace(/\/$/, '');
+    if (!request.customer.email) throw new Error('CHECKOUT_CUSTOMER_EMAIL_REQUIRED');
+    const digits = request.customer.phone.replace(/\D/g, '');
+    const cellphone = digits.length > 11 && digits.startsWith('55') ? `+${digits}` : `+55${digits}`;
+    const customer = await this.request<{ id: string }>('/customers/create', 'POST', {
+      name: request.customer.name,
+      email: request.customer.email,
+      cellphone,
+    });
+    if (!customer.id?.startsWith('cust_')) throw new Error('INVALID_ABACATEPAY_CUSTOMER_RESPONSE');
     const checkout = await this.request<{ id: string; url: string; amount: number; items: Array<{id:string;quantity:number}> }>(
       '/checkouts/create',
       'POST',
       {
         items: [{ id: productId, quantity: 1 }],
+        customerId: customer.id,
         externalId: request.orderPublicId,
         methods: ['PIX'],
         returnUrl: `${landingUrl}/#planos`,

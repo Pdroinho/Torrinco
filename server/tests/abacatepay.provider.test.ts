@@ -19,18 +19,22 @@ describe('AbacatePay v2 recurring contract', () => {
   it('creates a monthly Pix checkout with the configured one-period product', async () => {
     const fetchMock = vi.fn(async (_url: string, options: RequestInit) => {
       const body = JSON.parse(String(options.body));
-      expect(body).toMatchObject({ externalId: 'order-1', methods: ['PIX'], items: [{ id: 'prod_pix_month', quantity: 1 }] });
+      if (_url.endsWith('/customers/create')) {
+        expect(body).toEqual({name:'Teste',email:'teste@example.org',cellphone:'+5579999999999'});
+        return { ok:true, status:200, json:async()=>({success:true,data:{id:'cust_1'}}) };
+      }
+      expect(body).toMatchObject({ customerId:'cust_1', externalId: 'order-1', methods: ['PIX'], items: [{ id: 'prod_pix_month', quantity: 1 }] });
       expect(body.frequency).toBeUndefined();
       return { ok: true, status: 200, json: async () => ({ success: true, data: { id: 'bill_1', url: 'https://app.abacatepay.com/pay/bill_1', amount: 1990, items: body.items } }) };
     });
     vi.stubGlobal('fetch', fetchMock);
-    const result = await new AbacatePayProvider().createCheckout({ orderPublicId: 'order-1', amount: '19.90', currency: 'BRL', billingPeriod: 'monthly', customer: { name: 'Teste', phone: '5579999999999' }, description: 'Torrinco' });
+    const result = await new AbacatePayProvider().createCheckout({ orderPublicId: 'order-1', amount: '19.90', currency: 'BRL', billingPeriod: 'monthly', customer: { name: 'Teste', phone: '5579999999999', email:'teste@example.org' }, description: 'Torrinco' });
     expect(result.externalCheckoutId).toBe('bill_1');
   });
 
   it('rejects a checkout whose gateway price differs from the order', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { id: 'bill_1', url: 'https://app.abacatepay.com/pay/bill_1', amount: 990, items: [{ id: 'prod_year', quantity: 1 }] } }) })));
-    await expect(new AbacatePayProvider().createCheckout({ orderPublicId: 'order-1', amount: '119.88', currency: 'BRL', billingPeriod: 'yearly', customer: { name: 'Teste', phone: '5579999999999' }, description: 'Torrinco' })).rejects.toThrow('PRODUCT_PRICE_MISMATCH');
+    vi.stubGlobal('fetch', vi.fn(async (url:string) => ({ ok: true, status: 200, json: async () => ({ success: true, data: url.endsWith('/customers/create') ? {id:'cust_1'} : { id: 'bill_1', url: 'https://app.abacatepay.com/pay/bill_1', amount: 990, items: [{ id: 'prod_pix_year', quantity: 1 }] } }) })));
+    await expect(new AbacatePayProvider().createCheckout({ orderPublicId: 'order-1', amount: '119.88', currency: 'BRL', billingPeriod: 'yearly', customer: { name: 'Teste', phone: '5579999999999',email:'teste@example.org' }, description: 'Torrinco' })).rejects.toThrow('PRODUCT_PRICE_MISMATCH');
   });
 
   it('maps a signed activation using the subscription checkoutId', async () => {
