@@ -15,6 +15,7 @@ type Overview = {
 
 const formatDate = (date: string | null) => date ? formatInstantDateLong(date) : 'Não definido';
 const money = (value: string | number | null) => value == null ? 'Indisponível' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value));
+const checkoutPrice = (value: string | number | null, method: 'card'|'pix') => value == null || method === 'card' ? value : Math.round(Math.round(Number(value) * 100) * 0.9) / 100;
 
 export function Subscription() {
   const [data, setData] = useState<Overview | null>(null);
@@ -74,11 +75,11 @@ export function Subscription() {
           <label className="block text-sm">CPF ou CNPJ<input required inputMode="numeric" autoComplete="off" value={taxId} onChange={event => setTaxId(formatTaxId(event.target.value))} className="mt-1 w-full rounded-lg border p-2" /></label>
           <fieldset className="flex flex-wrap gap-4"><legend className="mb-2 text-sm font-semibold">Forma de pagamento</legend>
             <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='card'} onChange={()=>setPaymentMethod('card')} /> Cartão de crédito</label>
-            <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='pix'} onChange={()=>setPaymentMethod('pix')} /> Pix</label>
+            <label className="flex items-center gap-2"><input type="radio" name="paymentMethod" checked={paymentMethod==='pix'} onChange={()=>setPaymentMethod('pix')} /> Pix · 10% de desconto</label>
           </fieldset>
           {data.availablePlans.map(plan => <div key={plan.id} className="space-y-2">
-            <button disabled={busy || !email.includes('@')} onClick={() => buy('monthly')} className="w-full rounded-lg bg-torrinco-700 px-4 py-3 text-white disabled:opacity-50">{paymentMethod==='card'?'Assinar mensal':'Pagar um mês'} · {money(plan.price_monthly)}</button>
-            <button disabled={busy || !email.includes('@')} onClick={() => buy('yearly')} className="w-full rounded-lg border px-4 py-3 disabled:opacity-50">{paymentMethod==='card'?'Assinar anual':'Pagar um ano'} · {money(plan.price_yearly)}</button>
+            <button disabled={busy || !email.includes('@')} onClick={() => buy('monthly')} className="w-full rounded-lg bg-torrinco-700 px-4 py-3 text-white disabled:opacity-50">{paymentMethod==='card'?'Assinar mensal':'Pagar um mês'} · {money(checkoutPrice(plan.price_monthly,paymentMethod))}</button>
+            <button disabled={busy || !email.includes('@')} onClick={() => buy('yearly')} className="w-full rounded-lg border px-4 py-3 disabled:opacity-50">{paymentMethod==='card'?'Assinar anual':'Pagar um ano'} · {money(checkoutPrice(plan.price_yearly,paymentMethod))}</button>
           </div>)}
           <p className="text-sm text-gray-500">{paymentMethod==='card'?'Assinatura com renovação automática no cartão. Cancele quando quiser.':'Pagamento por Pix. Para renovar, faça um novo pagamento ao fim do período.'}</p>
         </div>}

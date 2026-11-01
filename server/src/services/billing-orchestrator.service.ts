@@ -5,6 +5,7 @@ import { receiveBillingEvent } from './billing-webhook.service.js';
 import { AccountProvisioningService } from './account-provisioning.service.js';
 import { invalidateAccountStatusCache } from '../middleware/jwt.js';
 import { EvolutionService } from './evolution.service.js';
+import { checkoutAmount } from '../billing/pricing.js';
 
 export class BillingOrchestratorService {
   static async createOrder(input:{idempotencyKey:string;planName:string;billingPeriod:'monthly'|'yearly';paymentMethod?:'pix'|'card';name:string;phone:string;email?:string;userId?:number;accountId?:number}){
@@ -12,7 +13,8 @@ export class BillingOrchestratorService {
     const openCardKey=input.paymentMethod==='card'?crypto.createHash('sha256').update(AccountProvisioningService.normalizePhone(input.phone)).digest('hex'):null;
     if(openCardKey){const pending=await prisma.commerce_orders.findUnique({where:{open_card_key:openCardKey}});if(pending)return pending;}
     const plan=await prisma.plans.findUnique({where:{name:input.planName}});if(!plan||plan.status!=='active')throw Object.assign(new Error('PLAN_NOT_AVAILABLE'),{statusCode:400});
-    const amount=input.billingPeriod==='yearly'?plan.price_yearly:plan.price_monthly;if(amount==null)throw Object.assign(new Error('PLAN_PRICE_NOT_CONFIGURED'),{statusCode:409});
+    const baseAmount=input.billingPeriod==='yearly'?plan.price_yearly:plan.price_monthly;if(baseAmount==null)throw Object.assign(new Error('PLAN_PRICE_NOT_CONFIGURED'),{statusCode:409});
+    const amount=checkoutAmount(Number(baseAmount),input.paymentMethod);
     try{return await prisma.commerce_orders.create({data:{public_id:crypto.randomUUID(),idempotency_key:input.idempotencyKey,open_card_key:openCardKey,user_id:input.userId,account_id:input.accountId,plan_id:plan.id,customer_name:input.name,customer_phone:AccountProvisioningService.normalizePhone(input.phone),customer_email:input.email,expected_amount:amount,currency:'BRL',payment_method:input.paymentMethod??'pix',billing_period_days:input.billingPeriod==='yearly'?365:30}})}catch(error:any){if(error?.code!=='P2002')throw error;const prior=await prisma.commerce_orders.findUnique({where:{idempotency_key:input.idempotencyKey}});if(prior)return prior;if(openCardKey){const pending=await prisma.commerce_orders.findUnique({where:{open_card_key:openCardKey}});if(pending)return pending;}throw error};
   }
   static async createCheckout(orderPublicId:string,provider:BillingProvider,taxId?:string){

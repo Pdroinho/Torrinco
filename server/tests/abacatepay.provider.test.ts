@@ -82,6 +82,13 @@ describe('AbacatePay v2 recurring contract', () => {
     await expect(map('PENDING')).rejects.toMatchObject({statusCode:400});
   });
 
+  it('accepts previously issued Pix products while old checkouts remain payable', async () => {
+    vi.stubEnv('ABACATEPAY_PIX_YEARLY_LEGACY_PRODUCT_ID', 'prod_pix_old');
+    const raw=Buffer.from(JSON.stringify({id:'log_old',event:'checkout.completed',devMode:false,data:{checkout:{id:'bill_old',externalId:'order-old',frequency:'ONE_TIME',status:'PAID',paidAmount:11988,items:[{id:'prod_pix_old',quantity:1}]}}}));
+    const signature=crypto.createHmac('sha256',PUBLIC_HMAC_KEY).update(raw).digest('base64');
+    expect(await new AbacatePayProvider().validateAndMapWebhook(raw,{'x-torrinco-webhook-secret':'test-secret','x-webhook-signature':signature})).toMatchObject({type:'payment.approved',amount:'119.88',planReference:'individual'});
+  });
+
   it('ignores checkout completion for a subscription and waits for its activation event',async()=>{
     const raw=Buffer.from(JSON.stringify({id:'log_sub_checkout',event:'checkout.completed',devMode:false,data:{checkout:{id:'bill_1',frequency:'SUBSCRIPTION',status:'PAID'}}}));
     const signature=crypto.createHmac('sha256',PUBLIC_HMAC_KEY).update(raw).digest('base64');
